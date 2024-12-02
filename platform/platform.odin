@@ -40,9 +40,10 @@ Game_API :: struct {
 	init: proc(),
 	update: proc() -> bool,
 	shutdown: proc(),
-	memory: proc() -> rawptr,
+	game_memory: proc() -> rawptr,
+	replay_memory: proc() -> rawptr,
 	memory_size: proc() -> int,
-	hot_reloaded: proc(mem: rawptr),
+	hot_reloaded: proc(game_mem, replay_mem: rawptr),
 	force_restart: proc() -> bool,
 	modification_time: os.File_Time,
 	api_version: int,
@@ -148,9 +149,11 @@ main :: proc() {
 					// such as string literals. The old DLLs are only unloaded
 					// on a full reset or on shutdown.
 					append(&old_game_apis, game_api)
-					game_memory := game_api.memory()
+					game_memory := game_api.game_memory()
+					replay_memory := game_api.replay_memory()
 					game_api = new_game_api
-					game_api.hot_reloaded(game_memory)
+					game_api.hot_reloaded(game_memory, replay_memory)
+
 				} else {
 					// This does a full reset. That's basically like opening and
 					// closing the game, without having to restart the executable.

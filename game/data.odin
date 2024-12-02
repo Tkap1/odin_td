@@ -59,10 +59,15 @@ s_entity_info :: struct(type: typeid, max_elements: i32)
 s_replay :: struct
 {
 	replaying: bool,
-	first: i32,
-	count: i32,
-	curr: i32,
 	dragging: bool,
+}
+
+s_circular :: struct
+{
+	curr: i32,
+	start: i32,
+	end: i32,
+	count: i32,
 }
 
 s_game :: struct
@@ -87,8 +92,12 @@ s_game :: struct
 
 	particle_arr: s_list(s_particle, c_max_particles),
 
+	max_compress_size : i32,
+	max_states: i32,
+
 	pop_sound: [16]rl.Sound,
 	deleteme: i32,
+
 }
 
 

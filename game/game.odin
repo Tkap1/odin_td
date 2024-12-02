@@ -22,6 +22,7 @@ import "core:os/os2"
 import rl "vendor:raylib"
 import "vendor:zlib"
 import "core:math/rand"
+import "base:intrinsics"
 
 s_v2 :: rl.Vector2;
 s_v4 :: rl.Vector4;
@@ -37,7 +38,7 @@ epsilon :: cast(f32)0.000001;
 
 g_game: ^s_game
 g_replay_data: rawptr;
-
+g_circular : s_circular;
 g_replay: s_replay;
 
 update :: proc() {
@@ -188,9 +189,18 @@ update :: proc() {
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		update enemies end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	if !g_replay.replaying && c_game_speed <= 1.0 {
-		index := g_game.update_count % c_max_states;
-		write_game_state(fmt.tprintf("update_state{}.tk", index));
+	// if !g_replay.replaying && c_game_speed <= 1.0 {
+	if !g_replay.replaying {
+		index := g_game.update_count % g_game.max_states;
+		data, len := get_compressed_game_state();
+		base := intrinsics.ptr_offset(cast(^u8)g_replay_data, (g_game.max_compress_size + 4) * g_circular.end);
+		base2 := intrinsics.ptr_offset(base, 4);
+		len2 := cast(i32)len;
+		intrinsics.mem_copy(base, &len2, 4);
+		intrinsics.mem_copy(base2, &data[0], len);
+		// write_game_state(fmt.tprintf("update_state{}.tk", index));
+		delete(data);
+		circular_add(&g_circular);
 	}
 	g_game.update_count += 1;
 }
@@ -212,42 +222,6 @@ render :: proc(interp_dt: f32) -> bool {
 	if rl.IsKeyPressed(.F9) {
 		do_replay();
 	}
-
-	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		replay start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-	if g_replay.replaying {
-		rl.DrawText(fmt.ctprintf("Frame {} / {}", g_replay.curr, g_replay.count - 1), 4, 64, 32, rl.RAYWHITE);
-		if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressedRepeat(.LEFT) {
-			g_replay.curr -= 1;
-			if g_replay.curr < 0 {
-				g_replay.curr = g_replay.count - 1;
-			}
-		}
-
-		if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressedRepeat(.RIGHT) {
-			g_replay.curr += 1;
-			if g_replay.curr >= g_replay.count {
-				g_replay.curr = g_replay.curr % g_replay.count;
-			}
-		}
-
-		pos := wxy(0.0, 0.95);
-		size := wxy(1.0, 0.05);
-		if mouse_collides_rect_topleft(mouse, pos, size) && rl.IsMouseButtonDown(.LEFT) {
-			mouse_percent := ilerp(pos.x, pos.x + size.x, mouse.x);
-			temp_curr := cast(i32)math.floor(math.lerp(cast(f32)g_replay.first, cast(f32)(g_replay.first + g_replay.count - 1), mouse_percent));
-			g_replay.curr = temp_curr % c_max_states;
-		}
-
-		c := rl.RED;
-		c.a = 50;
-		draw_rect_topleft(pos, size, c);
-		c.a = 255;
-		last_frame := g_replay.first + g_replay.count - 1;
-		percent := ilerp(cast(f32)g_replay.first, cast(f32)last_frame, cast(f32)g_replay.curr);
-		draw_rect_topleft(wxy(0.0, 0.95), wxy(percent, 0.05), c);
-	}
-	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		replay end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render background start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	{
@@ -441,16 +415,33 @@ render :: proc(interp_dt: f32) -> bool {
 		draw_rect_center(flash, c_enemy_size, make_color_r(255));
 	}
 
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		replay start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	if g_replay.replaying {
+		rl.DrawText(fmt.ctprintf("Frame {} / {}", circular_get_as_linear(g_circular, g_circular.curr), circular_count(g_circular) - 1), 4, 64, 32, rl.RAYWHITE);
+		if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressedRepeat(.LEFT) {
+			circular_curr_go_back_respect_full(&g_circular);
+		}
 
-	// {
-	// 	path := get_path(c_start_tile, c_end_tile);
-	// 	for i in 0..<path.length {
-	// 		c := rl.BLUE;
-	// 		c.a = 50;
-	// 		pos := tile_index_to_pos(path.pos_arr[i]);
-	// 		rl.DrawRectangleV(pos, v2_1(c_tile_size), c);
-	// 	}
-	// }
+		if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressedRepeat(.RIGHT) {
+			circular_curr_go_forward_respect_full(&g_circular);
+		}
+
+		pos := wxy(0.0, 0.95);
+		size := wxy(1.0, 0.05);
+		if mouse_collides_rect_topleft(mouse, pos, size) && rl.IsMouseButtonDown(.LEFT) {
+			mouse_percent := ilerp(pos.x, pos.x + size.x, mouse.x);
+			temp_curr := cast(i32)math.floor(math.lerp(cast(f32)g_circular.start, cast(f32)g_circular.end, mouse_percent));
+			g_circular.curr = temp_curr;
+		}
+
+		c := rl.RED;
+		c.a = 50;
+		draw_rect_topleft(pos, size, c);
+		c.a = 255;
+		percent := ilerp(cast(f32)g_circular.start, cast(f32)g_circular.end, cast(f32)g_circular.curr);
+		draw_rect_topleft(wxy(0.0, 0.95), wxy(percent, 0.05), c);
+	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		replay end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	rl.DrawFPS(4, 4);
 
@@ -465,8 +456,18 @@ game_update :: proc() -> bool {
 		g_game.accumulator += rl.GetFrameTime() * c_game_speed;
 	}
 	if g_replay.replaying {
-		name := fmt.tprintf("update_state{}.tk", g_replay.curr);
-		load_game_state(name);
+		// get the curr ptr
+		// copy it into game
+		len_ptr := cast(^i32)intrinsics.ptr_offset(cast(^u8)g_replay_data, g_circular.curr * (g_game.max_compress_size + 4));
+		len := len_ptr^;
+		src_ptr := intrinsics.ptr_offset(cast(^u8)g_replay_data, g_circular.curr * (g_game.max_compress_size + 4) + 4);
+		src := ([^]byte)(src_ptr)[:len]
+		dst_len := cast(u32)size_of(s_game);
+		dst := ([^]byte)(g_game)[:size_of(s_game)];
+		zlib.uncompress(&dst[0], &dst_len, &src[0], auto_cast len);
+		// ptr := cast(rawptr)g_game;
+		// src := make([]byte, file_size);
+		// zlib.uncompress(&data[0], &dst_len, &src[0], cast(u32)file_size);
 	}
 	for g_game.accumulator >= c_update_delay {
 		g_game.accumulator -= c_update_delay
@@ -488,9 +489,13 @@ game_init_window :: proc() {
 @(export)
 game_init :: proc() {
 	g_game = new(s_game)
-	g_replay_data = rl.MemAlloc(1024 * 1024 * 1024);
-
 	g_game^ = s_game {}
+	g_replay_data = rl.MemAlloc(auto_cast c_replay_memory);
+
+	g_game.max_compress_size = auto_cast zlib.compressBound(size_of(s_game));
+	g_game.max_states = c_replay_memory / (g_game.max_compress_size + 4);
+	g_circular = {}
+	g_circular.count = g_game.max_states;
 
 	init_entity_arr(&g_game.tower_arr);
 	init_entity_arr(&g_game.enemy_arr);
@@ -516,11 +521,6 @@ game_init :: proc() {
 		}
 	}
 
-	for i in 0..<c_max_states {
-		name := fmt.tprintf("update_state{}.tk", i);
-		os2.remove(name);
-	}
-
 	g_game.render_texture = rl.LoadRenderTexture(c_window_width, c_window_height);
 	for i in 0..<16 {
 		g_game.pop_sound[i] = rl.LoadSound("assets/pop.wav");
@@ -536,8 +536,13 @@ game_shutdown :: proc() {
 }
 
 @(export)
-game_memory :: proc() -> rawptr {
+game_game_memory :: proc() -> rawptr {
 	return g_game
+}
+
+@(export)
+game_replay_memory :: proc() -> rawptr {
+	return g_replay_data
 }
 
 @(export)
@@ -546,8 +551,12 @@ game_memory_size :: proc() -> int {
 }
 
 @(export)
-game_hot_reloaded :: proc(mem: rawptr) {
-	g_game = (^s_game)(mem)
+game_hot_reloaded :: proc(game_mem, replay_mem: rawptr) {
+	g_game = (^s_game)(game_mem)
+	g_replay_data = replay_mem;
+
+	g_circular = {}
+	g_circular.count = g_game.max_states;
 }
 
 @(export)
@@ -838,22 +847,26 @@ remove_entity :: proc(info: ^s_entity_info($T, $N), index: i32)
 	info.count -= 1;
 }
 
-write_game_state :: proc(name: string)
+get_compressed_game_state :: proc() -> ([]byte, i32)
 {
 	ptr := cast(rawptr)g_game;
 	data := ([^]byte)(ptr)[:size_of(s_game)];
-	dst_len := zlib.compressBound(size_of(s_game));
+	dst_len := cast(u32)g_game.max_compress_size;
 	dst := make([]byte, dst_len);
 	zlib.compress(&dst[0], &dst_len, &data[0], size_of(s_game));
+	return dst, auto_cast dst_len;
+}
 
-	// fmt.printf("{}, ratio: {}\n", dst_len, cast(f32)dst_len / cast(f32)size_of(s_game));
+write_game_state :: proc(name: string)
+{
+	data, len := get_compressed_game_state();
 
 	file, _ := os2.create(name);
-	os2.write(file, dst[:dst_len]);
-	os2.truncate(file, auto_cast dst_len);
+	os2.write(file, data[:len]);
+	os2.truncate(file, auto_cast len);
 	os2.close(file);
 
-	delete(dst);
+	delete(data);
 }
 
 load_game_state :: proc(name: string)
@@ -977,36 +990,7 @@ do_replay :: proc()
 	}
 	else {
 		g_replay.replaying = true;
-		lowest_time : os.File_Time = 0xFFFFFFFFFFFFFFFF;
-		lowest : i32 = -1;
-		count : i32 = 0;
-		for i in 0..<c_max_states {
-			name := fmt.tprintf("update_state{}.tk", i);
-			mod_time, mod_time_error := os.last_write_time_by_name(name);
-			if mod_time_error == nil {
-				count += 1;
-				if mod_time < lowest_time {
-					lowest_time = mod_time;
-					lowest = i;
-				}
-			}
-			// file, err := os2.open(name);
-			// if err != nil {
-
-				// break;
-				// fmt.printf("{}, err {}\n", i, err);
-		}
-		g_replay.first = lowest;
-		g_replay.count = count;
-		g_replay.curr = (lowest + count - 1) % c_max_states;
-
-		if count <= 0 {
-			g_replay.replaying = false;
-			fmt.printf("OI! Nothing to replay, kinda sus...\n");
-		}
-
-		fmt.printf("{} {}\n", g_replay.first, count);
-
+		g_circular.curr = circular_index(g_circular.end - 1, g_circular.count);
 	}
 	fmt.printf("{}\n", g_replay.replaying);
 }
@@ -1260,4 +1244,100 @@ make_particle_data :: proc() -> s_particle_data
 	data.max_size = v2(8, 8);
 	data.shrink = 1;
 	return data;
+}
+
+circular_add :: proc(circular : ^s_circular)
+{
+	assert(circular.count > 1);
+	circular.end = (circular.end + 1) % circular.count;
+	if circular.end == circular.start {
+		circular.start = (circular.end + 1) % circular.count;
+	}
+}
+
+circular_count :: proc(circular: s_circular) -> i32
+{
+	assert(circular.count > 1);
+	if circular.end >= circular.start {
+		return circular.end;
+	}
+	return circular.count;
+}
+
+circular_curr_go_back :: proc(circular: ^s_circular)
+{
+	using circular;
+	assert(count > 1);
+	curr -= 1;
+	if curr < start {
+		curr = end;
+	}
+}
+
+circular_curr_go_forward :: proc(circular: ^s_circular)
+{
+	using circular;
+	assert(count > 1);
+
+	curr += 1;
+	if curr > circular_count(circular^) {
+		curr = start;
+	}
+}
+
+circular_get_as_linear :: proc(circular: s_circular, index: i32) -> i32
+{
+	using circular;
+	assert(count > 1);
+	assert(index >= 0);
+	assert(index < count);
+
+	result := circular_index(index - start, count);
+	return result;
+}
+
+circular_index :: proc(index, size: i32) -> i32
+{
+	assert(size > 0);
+	if index >= 0 {
+		return index % size;
+	}
+	return (size - 1) - ((-index - 1) % size);
+}
+
+circular_is_full :: proc(circular: s_circular) -> bool
+{
+	using circular;
+	assert(count > 1);
+	result := circular_count(circular) == count;
+	return result;
+}
+
+circular_curr_go_forward_respect_full :: proc(circular: ^s_circular)
+{
+	using circular;
+	assert(count > 1);
+
+	if circular_is_full(circular^) {
+		circular_curr_go_forward(circular);
+	}
+	else {
+		if curr + 1 == end {
+			curr = start;
+		}
+		else {
+			circular_curr_go_forward(circular);
+		}
+	}
+}
+
+circular_curr_go_back_respect_full :: proc(circular: ^s_circular)
+{
+	using circular;
+	assert(count > 1);
+
+	circular_curr_go_back(circular);
+	if curr == end && !circular_is_full(circular^) {
+		curr = end - 1;
+	}
 }

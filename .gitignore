@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+update_state*.tk
+*.pdb
+*.exp
