@@ -30,7 +30,6 @@ if not exist build mkdir build
 pushd build
 	echo Building dll...
 	odin.exe build ..\game -build-mode:dll -debug -define:RAYLIB_SHARED=true -pdb-name:..\pdbs\game_%PDB_NUMBER%.pdb %vet%
-	echo %ERRORLEVEL%
 	IF %ERRORLEVEL% NEQ 0 goto end
 
 	if %GAME_RUNNING% == true (
