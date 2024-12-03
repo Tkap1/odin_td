@@ -17,24 +17,11 @@ package game
 // import "core:math/linalg"
 import "core:fmt"
 import "core:math"
-import "core:os"
 import "core:os/os2"
 import rl "vendor:raylib"
 import "vendor:zlib"
 import "core:math/rand"
 import "base:intrinsics"
-
-s_v2 :: rl.Vector2;
-s_v4 :: rl.Vector4;
-s_color :: rl.Color;
-s_render_texture :: rl.RenderTexture
-s_rect :: rl.Rectangle
-
-pi :: cast(f32)3.1415926;
-half_pi :: pi * 0.5;
-quarter_pi :: pi * 0.25;
-tau :: cast(f32)6.28318530717958647692;
-epsilon :: cast(f32)0.000001;
 
 g_game: ^s_game
 g_replay_data: rawptr;
@@ -42,6 +29,7 @@ g_circular : s_circular;
 g_replay: s_replay;
 
 update :: proc() {
+	// @Fixme(tkap, 03/12/2024): want to delete but compiler crashes!
 	using g_game;
 
 	delta := cast(f32)c_update_delay;
@@ -50,26 +38,26 @@ update :: proc() {
 	spawn_timer += delta
 	for spawn_timer >= c_spawn_delay {
 		spawn_timer -= c_spawn_delay;
-		enemy_index := make_enemy(v2i(0, 15));
+		make_enemy(v2i(0, 15));
 	}
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		update towers start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<cast(i32)c_max_towers {
-		if !tower_arr.active[i] { continue; }
-		tower := &tower_arr.data[i];
+		if !play.tower_arr.active[i] { continue; }
+		tower := &play.tower_arr.data[i];
 		tower_pos := tile_index_to_pos_center(tower.pos);
 
 		target : i32 = -1;
 		passed := update_time - tower.shot_timestamp;
 		if passed >= c_tower_shoot_delay {
 			for j in 0..<cast(i32)c_max_enemies {
-				if !enemy_arr.active[j] { continue; }
+				if !play.enemy_arr.active[j] { continue; }
 				target = j;
 				break;
 			}
 		}
 		if target >= 0 {
-			enemy := &enemy_arr.data[target];
+			enemy := &play.enemy_arr.data[target];
 			tower.shot_timestamp = update_time;
 			dir := v2_dir_from_to(tower_pos, enemy.pos);
 			tower.last_shot_angle = v2_angle(dir);
@@ -88,22 +76,22 @@ update :: proc() {
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		update projectiles start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<cast(i32)c_max_projectiles {
-		if !proj_arr.active[i] { continue; }
-		proj := &proj_arr.data[i];
+		if !play.proj_arr.active[i] { continue; }
+		proj := &play.proj_arr.data[i];
 		remove_proj := false;
 		proj.prev_pos = proj.pos;
 		proj.pos += proj.dir * v2_1(c_proj_speed) * delta;
 
 		for j in 0..<cast(i32)c_max_enemies {
-			if !enemy_arr.active[j] { continue; }
-			enemy := &enemy_arr.data[j];
+			if !play.enemy_arr.active[j] { continue; }
+			enemy := &play.enemy_arr.data[j];
 			if rect_collides_rect_center(proj.pos, c_proj_size, enemy.pos, c_enemy_size) {
 				remove_proj = true;
 
 				enemy.damage_taken += proj.damage;
 				enemy.last_hit_time = g_game.update_time;
 				if enemy.damage_taken >= enemy.max_health {
-					remove_entity(&enemy_arr, j);
+					remove_entity(&play.enemy_arr, j);
 
 					{
 						data := make_particle_data();
@@ -120,10 +108,7 @@ update :: proc() {
 						do_particles(proj.pos, 32, data);
 					}
 
-					rl.SetSoundPitch(g_game.pop_sound[g_game.deleteme], 0.7 + rand.float32() * 0.6);
-					rl.PlaySound(g_game.pop_sound[g_game.deleteme]);
-					g_game.deleteme = (g_game.deleteme + 1) % 16;
-
+					play_sound(.pop);
 				}
 
 				{
@@ -150,30 +135,29 @@ update :: proc() {
 		}
 
 		if remove_proj {
-			remove_entity(&proj_arr, i);
+			remove_entity(&play.proj_arr, i);
 		}
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		update projectiles end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		update enemies start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<cast(i32)c_max_enemies {
-		using g_game
-		if !enemy_arr.active[i] { continue; }
-		enemy := &enemy_arr.data[i];
+		if !play.enemy_arr.active[i] { continue; }
+		enemy := &play.enemy_arr.data[i];
 		enemy.prev_pos = enemy.pos;
 
 		movement := 128 * delta;
 		for movement > 0 {
 			curr_tile := pos_to_tile_index(enemy.pos);
 			target_tile : s_v2i;
-			if path_mask[curr_tile.y][curr_tile.x] {
-				target_tile = next_path_tile[curr_tile.y][curr_tile.x];
+			if play.path_mask[curr_tile.y][curr_tile.x] {
+				target_tile = play.next_path_tile[curr_tile.y][curr_tile.x];
 			}
 			else {
 				target_tile = c_start_tile;
 			}
 			if compare_v2i(curr_tile, c_end_tile) {
-				remove_entity(&g_game.enemy_arr, i);
+				remove_entity(&play.enemy_arr, i);
 				break;
 			}
 			else {
@@ -191,14 +175,11 @@ update :: proc() {
 
 	// if !g_replay.replaying && c_game_speed <= 1.0 {
 	if !g_replay.replaying {
-		index := g_game.update_count % g_game.max_states;
 		data, len := get_compressed_game_state();
 		base := intrinsics.ptr_offset(cast(^u8)g_replay_data, (g_game.max_compress_size + 4) * g_circular.end);
 		base2 := intrinsics.ptr_offset(base, 4);
-		len2 := cast(i32)len;
-		intrinsics.mem_copy(base, &len2, 4);
+		intrinsics.mem_copy(base, &len, 4);
 		intrinsics.mem_copy(base2, &data[0], len);
-		// write_game_state(fmt.tprintf("update_state{}.tk", index));
 		delete(data);
 		circular_add(&g_circular);
 	}
@@ -211,6 +192,8 @@ render :: proc(interp_dt: f32) -> bool {
 
 	delta := rl.GetFrameTime();
 	mouse := rl.GetMousePosition();
+
+	play := &g_game.play;
 
 	if rl.IsKeyPressed(.F7) {
 		write_game_state("state.tk");
@@ -243,8 +226,8 @@ render :: proc(interp_dt: f32) -> bool {
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		render background end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	mouse_index := s_v2i{cast(i32)math.floor(mouse.x / c_tile_size), cast(i32)math.floor(mouse.y / c_tile_size)};
-	if rl.IsMouseButtonDown(.LEFT) && is_valid_tile_index_for_tower(mouse_index) {
-		if g_game.tile_info[mouse_index.y][mouse_index.x].id.id <= 0 {
+	if !g_replay.replaying && rl.IsMouseButtonDown(.LEFT) && is_valid_tile_index_for_tower(mouse_index) {
+		if play.tile_info[mouse_index.y][mouse_index.x].id.id <= 0 {
 			make_tower(mouse_index);
 		}
 	}
@@ -254,9 +237,8 @@ render :: proc(interp_dt: f32) -> bool {
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render towers start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<c_max_towers {
-		using g_game
-		if !tower_arr.active[i] { continue; }
-		tower := &tower_arr.data[i];
+		if !play.tower_arr.active[i] { continue; }
+		tower := &play.tower_arr.data[i];
 
 		pos := tile_index_to_pos_center(tower.pos);
 		passed := get_render_time(interp_dt) - tower.shot_timestamp;
@@ -283,9 +265,8 @@ render :: proc(interp_dt: f32) -> bool {
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render enemies start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<c_max_enemies {
-		using g_game
-		if !enemy_arr.active[i] { continue; }
-		enemy := enemy_arr.data[i];
+		if !play.enemy_arr.active[i] { continue; }
+		enemy := play.enemy_arr.data[i];
 		pos := lerp_v2(enemy.prev_pos, enemy.pos, interp_dt);
 		passed := get_render_time(interp_dt) - enemy.last_hit_time;
 
@@ -309,8 +290,8 @@ render :: proc(interp_dt: f32) -> bool {
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render projectiles start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<cast(i32)c_max_projectiles {
-		if !g_game.proj_arr.active[i] { continue; }
-		proj := &g_game.proj_arr.data[i];
+		if !play.proj_arr.active[i] { continue; }
+		proj := &play.proj_arr.data[i];
 		passed := get_render_time(interp_dt) - proj.spawn_timestamp;
 		color: s_color;
 		size: s_v2;
@@ -348,7 +329,7 @@ render :: proc(interp_dt: f32) -> bool {
 
 		if multiply_light_arr.count > 0 {
 			rl.BeginBlendMode(.ADDITIVE);
-			for light, i in to_slice(&multiply_light_arr) {
+			for light, _ in to_slice(&multiply_light_arr) {
 				rl.DrawCircleV(light.pos, light.radius, light.color);
 			}
 			rl.EndBlendMode();
@@ -371,13 +352,13 @@ render :: proc(interp_dt: f32) -> bool {
 		for ; i < g_game.particle_arr.count; i += 1 {
 			p := &g_game.particle_arr.data[i];
 			passed := get_render_time(interp_dt) - p.spawn_timestamp;
-			percent := clamp(passed / p.duration, 0.0, 1.0);
+			percent := clamp_01(passed / p.duration);
 			color := lerp_color(p.start_color, p.end_color, percent);
 			size := p.size;
-			shrink := clamp(1 - percent * p.shrink, 0.0, 1.0);
+			shrink := clamp_01(1 - percent * p.shrink);
 			size.x *= shrink;
 			size.y *= shrink;
-			slowdown := clamp(1 - percent * p.slowdown, 0.0, 1.0);
+			slowdown := clamp_01(1 - percent * p.slowdown);
 			p.pos += p.dir * p.speed * slowdown * delta;
 			draw_rect_center(p.pos, size, color);
 
@@ -403,7 +384,7 @@ render :: proc(interp_dt: f32) -> bool {
 
 		if add_light_arr.count > 0 {
 			rl.BeginBlendMode(.ADDITIVE);
-			for light, i in to_slice(&add_light_arr) {
+			for light, _ in to_slice(&add_light_arr) {
 				rl.DrawCircleV(light.pos, light.radius, light.color);
 			}
 			rl.EndBlendMode();
@@ -411,26 +392,34 @@ render :: proc(interp_dt: f32) -> bool {
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		additive lights end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	for flash, i in to_slice(&enemy_flash_arr) {
+	for flash, _ in to_slice(&enemy_flash_arr) {
 		draw_rect_center(flash, c_enemy_size, make_color_r(255));
 	}
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		replay start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	if g_replay.replaying {
-		rl.DrawText(fmt.ctprintf("Frame {} / {}", circular_get_as_linear(g_circular, g_circular.curr), circular_count(g_circular) - 1), 4, 64, 32, rl.RAYWHITE);
+		rl.DrawText(fmt.ctprintf("Update {} / {}", circular_get_as_linear(g_circular, g_circular.curr), circular_count(g_circular) - 1), 4, 64, 32, rl.RAYWHITE);
 		if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressedRepeat(.LEFT) {
-			circular_curr_go_back_respect_full(&g_circular);
+			circular_curr_go_back(&g_circular);
 		}
 
 		if rl.IsKeyPressed(.RIGHT) || rl.IsKeyPressedRepeat(.RIGHT) {
-			circular_curr_go_forward_respect_full(&g_circular);
+			circular_curr_go_forward(&g_circular);
 		}
 
 		pos := wxy(0.0, 0.95);
 		size := wxy(1.0, 0.05);
-		if mouse_collides_rect_topleft(mouse, pos, size) && rl.IsMouseButtonDown(.LEFT) {
-			mouse_percent := ilerp(pos.x, pos.x + size.x, mouse.x);
-			temp_curr := cast(i32)math.floor(math.lerp(cast(f32)g_circular.start, cast(f32)g_circular.end, mouse_percent));
+		mouse_percent := ilerp(pos.x, pos.x + size.x, mouse.x);
+		mouse_percent = clamp_01(mouse_percent);
+		temp_curr := circular_get_curr_from_percent(g_circular, mouse_percent);
+		if mouse_collides_rect_topleft(mouse, pos, size) && rl.IsMouseButtonPressed(.LEFT) {
+			g_replay.in_slider = true;
+		}
+		if !rl.IsMouseButtonDown(.LEFT) {
+			g_replay.in_slider = false;
+		}
+
+		if g_replay.in_slider {
 			g_circular.curr = temp_curr;
 		}
 
@@ -456,8 +445,6 @@ game_update :: proc() -> bool {
 		g_game.accumulator += rl.GetFrameTime() * c_game_speed;
 	}
 	if g_replay.replaying {
-		// get the curr ptr
-		// copy it into game
 		len_ptr := cast(^i32)intrinsics.ptr_offset(cast(^u8)g_replay_data, g_circular.curr * (g_game.max_compress_size + 4));
 		len := len_ptr^;
 		src_ptr := intrinsics.ptr_offset(cast(^u8)g_replay_data, g_circular.curr * (g_game.max_compress_size + 4) + 4);
@@ -465,9 +452,6 @@ game_update :: proc() -> bool {
 		dst_len := cast(u32)size_of(s_game);
 		dst := ([^]byte)(g_game)[:size_of(s_game)];
 		zlib.uncompress(&dst[0], &dst_len, &src[0], auto_cast len);
-		// ptr := cast(rawptr)g_game;
-		// src := make([]byte, file_size);
-		// zlib.uncompress(&data[0], &dst_len, &src[0], cast(u32)file_size);
 	}
 	for g_game.accumulator >= c_update_delay {
 		g_game.accumulator -= c_update_delay
@@ -492,14 +476,16 @@ game_init :: proc() {
 	g_game^ = s_game {}
 	g_replay_data = rl.MemAlloc(auto_cast c_replay_memory);
 
+	play := &g_game.play;
+
 	g_game.max_compress_size = auto_cast zlib.compressBound(size_of(s_game));
 	g_game.max_states = c_replay_memory / (g_game.max_compress_size + 4);
 	g_circular = {}
 	g_circular.count = g_game.max_states;
 
-	init_entity_arr(&g_game.tower_arr);
-	init_entity_arr(&g_game.enemy_arr);
-	init_entity_arr(&g_game.proj_arr);
+	init_entity_arr(&g_game.play.tower_arr);
+	init_entity_arr(&g_game.play.enemy_arr);
+	init_entity_arr(&g_game.play.proj_arr);
 
 	for y in 0..<cast(i32)c_num_tiles {
 		for x in 0..<cast(i32)c_num_tiles {
@@ -515,16 +501,17 @@ game_init :: proc() {
 		for i in 0..<path.length - 1 {
 			p := path.pos_arr[i];
 			next_p := path.pos_arr[i + 1];
-			g_game.next_path_tile[p.y][p.x] = next_p;
-			g_game.path_mask[p.y][p.x] = true;
-			g_game.path_mask[next_p.y][next_p.x] = true;
+			play.next_path_tile[p.y][p.x] = next_p;
+			play.path_mask[p.y][p.x] = true;
+			play.path_mask[next_p.y][next_p.x] = true;
 		}
 	}
 
 	g_game.render_texture = rl.LoadRenderTexture(c_window_width, c_window_height);
-	for i in 0..<16 {
-		g_game.pop_sound[i] = rl.LoadSound("assets/pop.wav");
-		rl.SetSoundVolume(g_game.pop_sound[i], 0.25);
+	for i in 0..<c_sound_duplicates {
+		sound := rl.LoadSound("assets/pop.wav");
+		rl.SetSoundVolume(sound, 0.25);
+		g_game.sound_arr[e_sound.pop][i] = sound;
 	}
 
 }
@@ -566,12 +553,13 @@ game_force_restart :: proc() -> bool {
 
 is_valid_tower_index :: proc(index: s_entity_id) -> bool
 {
+	using g_game.play;
 	assert(index.index >= 0);
 	assert(index.index < c_max_towers);
 	assert(index.id >= 0);
 	if index.id <= 0 { return false; }
-	if !g_game.tower_arr.active[index.index] { return false; }
-	if g_game.tower_arr.data.id[index.index] != index.id { return false; }
+	if !tower_arr.active[index.index] { return false; }
+	if tower_arr.data.id[index.index] != index.id { return false; }
 	return true;
 }
 
@@ -591,6 +579,7 @@ make_entity :: proc(info: ^s_entity_info($T, $N)) -> i32
 make_tower :: proc(tile_index: s_v2i) -> i32
 {
 	using g_game;
+	using g_game.play;
 	assert(tower_arr.count < c_max_towers);
 
 	index := make_entity(&tower_arr);
@@ -599,7 +588,7 @@ make_tower :: proc(tile_index: s_v2i) -> i32
 
 	tower.pos = tile_index;
 
-	g_game.tile_info[tile_index.y][tile_index.x].id = tower_to_entity_index(index);
+	play.tile_info[tile_index.y][tile_index.x].id = tower_to_entity_index(index);
 	g_game.node_arr[tile_index.y][tile_index.x].occupied = true;
 
 	path := get_path(c_start_tile, c_end_tile);
@@ -608,9 +597,9 @@ make_tower :: proc(tile_index: s_v2i) -> i32
 	for i in 0..<path.length - 1 {
 		p := path.pos_arr[i];
 		next_p := path.pos_arr[i + 1];
-		g_game.next_path_tile[p.y][p.x] = next_p;
-		g_game.path_mask[p.y][p.x] = true;
-		g_game.path_mask[next_p.y][next_p.x] = true;
+		play.next_path_tile[p.y][p.x] = next_p;
+		play.path_mask[p.y][p.x] = true;
+		play.path_mask[next_p.y][next_p.x] = true;
 	}
 
 	return index;
@@ -618,7 +607,7 @@ make_tower :: proc(tile_index: s_v2i) -> i32
 
 make_enemy :: proc(tile_index: s_v2i) -> i32
 {
-	using g_game;
+	using g_game.play;
 	assert(enemy_arr.count < c_max_enemies);
 
 	index := make_entity(&enemy_arr);
@@ -633,7 +622,7 @@ make_enemy :: proc(tile_index: s_v2i) -> i32
 
 make_proj :: proc(pos: s_v2, dir: s_v2) -> i32
 {
-	using g_game;
+	using g_game.play;
 	index := make_entity(&proj_arr);
 	proj := &proj_arr.data[index];
 	proj.prev_pos = pos;
@@ -646,9 +635,10 @@ make_proj :: proc(pos: s_v2, dir: s_v2) -> i32
 
 tower_to_entity_index :: proc(tower_index : i32) -> s_entity_id
 {
+	play := &g_game.play;
 	result : s_entity_id;
 	result.index = tower_index;
-	result.id = g_game.tower_arr.data[tower_index].id;
+	result.id = play.tower_arr.data[tower_index].id;
 	return result;
 }
 
@@ -947,9 +937,9 @@ draw_rect_center :: proc(pos, size: s_v2, color: s_color)
 	rl.DrawRectangleV(pos, size, color);
 }
 
-draw_rect_center_rot :: proc(pos, size: s_v2, color: s_color, rotation: f32)
+draw_rect_center_rot :: proc(pos, size: s_v2, color: s_color, in_rotation: f32)
 {
-	rotation := rotation * rl.RAD2DEG;
+	rotation := in_rotation * rl.RAD2DEG;
 	rect : rl.Rectangle;
 	rect.x = pos.x;
 	rect.y = pos.y;
@@ -1047,13 +1037,19 @@ make_animator :: proc() -> s_animator
 
 ilerp_clamp :: proc(start, end, value: $T) -> T
 {
-	result := ilerp(start, end, clamp(value, start, end));
+	result := ilerp(start, end, clamp(start, end, value));
 	return result;
 }
 
-clamp :: proc(current, min_val, max_val: $T) -> T
+clamp :: proc(min_val, max_val, current: $T) -> T
 {
 	result := at_most(max_val, at_least(min_val, current));
+	return result;
+}
+
+clamp_01 :: proc(current: $T) -> T
+{
+	result := clamp(zero_float, one_float, current);
 	return result;
 }
 
@@ -1212,7 +1208,7 @@ draw_render_texture :: proc(render_texture: s_render_texture)
 
 do_particles :: proc(pos: s_v2, count: i32, data: s_particle_data)
 {
-	for i in 0..<count {
+	for _ in 0..<count {
 		p: s_particle;
 		p.pos = pos;
 		p.spawn_timestamp = g_game.update_time;
@@ -1272,6 +1268,9 @@ circular_curr_go_back :: proc(circular: ^s_circular)
 	if curr < start {
 		curr = end;
 	}
+	if curr == end && !circular_is_full(circular^) {
+		curr = end - 1;
+	}
 }
 
 circular_curr_go_forward :: proc(circular: ^s_circular)
@@ -1281,6 +1280,9 @@ circular_curr_go_forward :: proc(circular: ^s_circular)
 
 	curr += 1;
 	if curr > circular_count(circular^) {
+		curr = start;
+	}
+	if !circular_is_full(circular^) && curr == end {
 		curr = start;
 	}
 }
@@ -1313,31 +1315,25 @@ circular_is_full :: proc(circular: s_circular) -> bool
 	return result;
 }
 
-circular_curr_go_forward_respect_full :: proc(circular: ^s_circular)
+circular_get_curr_from_percent :: proc(circular: s_circular, percent: f32) -> i32
 {
 	using circular;
 	assert(count > 1);
+	assert(percent >= 0);
+	assert(percent <= 1);
 
-	if circular_is_full(circular^) {
-		circular_curr_go_forward(circular);
+	result := cast(i32)math.floor(math.lerp(cast(f32)start, cast(f32)end, percent));
+	if !circular_is_full(circular) && result == end {
+		result = end - 1;
 	}
-	else {
-		if curr + 1 == end {
-			curr = start;
-		}
-		else {
-			circular_curr_go_forward(circular);
-		}
-	}
+
+	return result;
 }
 
-circular_curr_go_back_respect_full :: proc(circular: ^s_circular)
+play_sound :: proc(id: e_sound)
 {
-	using circular;
-	assert(count > 1);
-
-	circular_curr_go_back(circular);
-	if curr == end && !circular_is_full(circular^) {
-		curr = end - 1;
-	}
+	index := g_game.sound_play_index_arr[id];
+	rl.SetSoundPitch(g_game.sound_arr[id][index], 0.7 + rand.float32() * 0.6);
+	rl.PlaySound(g_game.sound_arr[id][index]);
+	g_game.sound_play_index_arr[id] = (index + 1) % c_sound_duplicates;
 }

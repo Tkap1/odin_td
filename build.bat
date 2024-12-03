@@ -10,7 +10,8 @@ if %GAME_RUNNING% == false (
 	del /q game_*.dll 2> nul
 
 	if exist "pdbs" (
-		del /q pdbs\*.pdb
+		del /q pdbs\*.pdb 2> NUL
+		del /q pdbs\*.rdi 2> NUL
 	) else (
 		mkdir pdbs
 	)
@@ -22,9 +23,14 @@ set /p PDB_NUMBER=<pdbs\pdb_number
 set /a PDB_NUMBER=%PDB_NUMBER%+1
 echo %PDB_NUMBER% > pdbs\pdb_number
 
+set vet=-vet-cast -vet-shadowing -vet-style -vet-tabs -vet-unused -vet-unused-imports -vet-unused-variables
+
+if not exist build mkdir build
+
 pushd build
 	echo Building dll...
-	..\..\odin.exe build ..\game -build-mode:dll -debug -define:RAYLIB_SHARED=true -pdb-name:..\pdbs\game_%PDB_NUMBER%.pdb
+	odin.exe build ..\game -build-mode:dll -debug -define:RAYLIB_SHARED=true -pdb-name:..\pdbs\game_%PDB_NUMBER%.pdb %vet%
+	echo %ERRORLEVEL%
 	IF %ERRORLEVEL% NEQ 0 goto end
 
 	if %GAME_RUNNING% == true (
@@ -32,7 +38,7 @@ pushd build
 	)
 
 	echo Building platform...
-	..\..\odin.exe build ..\platform -debug
+	odin.exe build ..\platform -debug
 	IF %ERRORLEVEL% NEQ 0 goto end
 
 :end

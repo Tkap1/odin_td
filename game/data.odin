@@ -3,6 +3,18 @@ package game
 
 import rl "vendor:raylib"
 
+s_v2 :: rl.Vector2;
+s_v4 :: rl.Vector4;
+s_color :: rl.Color;
+s_render_texture :: rl.RenderTexture
+s_rect :: rl.Rectangle
+s_sound :: rl.Sound
+
+e_sound :: enum
+{
+	pop,
+}
+
 s_entity_id :: struct {
 	index: i32,
 	id: i32,
@@ -53,13 +65,14 @@ s_entity_info :: struct(type: typeid, max_elements: i32)
 	count: i32,
 	active: [max_elements]bool,
 	free: [max_elements]i32,
-	data: #soa[max_elements]type
+	data: #soa[max_elements]type,
 }
 
 s_replay :: struct
 {
 	replaying: bool,
 	dragging: bool,
+	in_slider: bool,
 }
 
 s_circular :: struct
@@ -70,6 +83,19 @@ s_circular :: struct
 	count: i32,
 }
 
+s_play :: struct
+{
+	gold: i32,
+
+	tower_arr: s_entity_info(s_tower, c_max_towers),
+	enemy_arr: s_entity_info(s_enemy, c_max_enemies),
+	proj_arr: s_entity_info(s_projectile, c_max_projectiles),
+
+	tile_info: [c_num_tiles][c_num_tiles]s_tile_info,
+	path_mask : [c_num_tiles][c_num_tiles]bool,
+	next_path_tile : [c_num_tiles][c_num_tiles]s_v2i,
+}
+
 s_game :: struct
 {
 	update_count: i32,
@@ -77,27 +103,20 @@ s_game :: struct
 	accumulator: f32,
 	update_time: f32,
 	spawn_timer: f32,
-	tile_info: [c_num_tiles][c_num_tiles]s_tile_info,
 
 	render_texture: s_render_texture,
 
-	tower_arr: s_entity_info(s_tower, c_max_towers),
-	enemy_arr: s_entity_info(s_enemy, c_max_enemies),
-	proj_arr: s_entity_info(s_projectile, c_max_projectiles),
+	play: s_play,
 
 	node_arr: [c_num_tiles][c_num_tiles]s_astar_node,
-
-	next_path_tile : [c_num_tiles][c_num_tiles]s_v2i,
-	path_mask : [c_num_tiles][c_num_tiles]bool,
 
 	particle_arr: s_list(s_particle, c_max_particles),
 
 	max_compress_size : i32,
 	max_states: i32,
 
-	pop_sound: [16]rl.Sound,
-	deleteme: i32,
-
+	sound_arr: [len(e_sound)][c_sound_duplicates]s_sound,
+	sound_play_index_arr: [len(e_sound)]i32,
 }
 
 

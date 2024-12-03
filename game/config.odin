@@ -24,3 +24,13 @@ c_proj_speed : f32 : 1024;
 c_window_size :: s_v2{c_window_width, c_window_height};
 c_max_particles :: 4096;
 c_replay_memory : i32 : 1024 * 1024 * 1024;
+zero_float: f32 : 0.0
+one_float: f32 : 1.0
+pi :: cast(f32)3.1415926;
+half_pi :: pi * 0.5;
+quarter_pi :: pi * 0.25;
+tau :: cast(f32)6.28318530717958647692;
+epsilon :: cast(f32)0.000001;
+
+// @Note(tkap, 03/12/2024): We need this because if we play the same sound twice and we set the pitch on each play the second pitch change will affect the first sound
+c_sound_duplicates :: 8;

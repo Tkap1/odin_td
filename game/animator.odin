@@ -128,7 +128,7 @@ update_animator :: proc(animator : ^s_animator, time_ptr : ^f32, speed : f32, lo
 
 	for step_i in 0..<step_index + 1 {
 		step_start := animator.step_start_time_arr[step_i];
-		for property, property_i in to_slice(&animator.property_arr[step_i]) {
+		for property, _ in to_slice(&animator.property_arr[step_i]) {
 			interp_dt := ilerp_clamp(step_start + property.delay, step_start + property.delay + property.duration, t);
 
 			switch property.ease_mode {

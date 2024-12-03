@@ -34,3 +34,4 @@
 update_state*.tk
 *.pdb
 *.exp
+pdbs/**
