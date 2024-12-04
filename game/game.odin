@@ -14,7 +14,6 @@
 
 package game
 
-// import "core:math/linalg"
 import "core:fmt"
 import "core:math"
 import "core:os/os2"
@@ -27,19 +26,36 @@ g_game: ^s_game
 g_replay_data: rawptr;
 g_circular : s_circular;
 g_replay: s_replay;
+g_wave_count : i32;
 
 update :: proc() {
-	// @Fixme(tkap, 03/12/2024): want to delete but compiler crashes!
-	using g_game;
 
 	delta := cast(f32)c_update_delay;
-	update_time += delta;
+	g_game.update_time += delta;
+	play := &g_game.play;
 
-	spawn_timer += delta
-	for spawn_timer >= c_spawn_delay {
-		spawn_timer -= c_spawn_delay;
-		make_enemy(v2i(0, 15));
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		update waves start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	for wave_i in 0..<play.curr_wave {
+		info := &play.live_wave_info_arr[wave_i];
+		wave := c_wave_arr[wave_i];
+		if info.finished { continue; }
+		passed := g_game.update_time - info.last_spawn_timestamp;
+		for passed >= wave.data.data[info.index].delay {
+			passed -= wave.data.data[info.index].delay;
+			make_enemy(wave.data.data[info.index].type, tile_index_to_pos_center(c_start_tile));
+			info.how_many_spawned += 1;
+			info.last_spawn_timestamp = g_game.update_time;
+			if equal(info.how_many_spawned, wave.data.data[info.index].to_spawn) {
+				info.index += 1;
+				info.how_many_spawned = 0;
+				if equal(info.index, wave.data.count) {
+					info.finished = true;
+					break;
+				}
+			}
+		}
 	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		update waves end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		update towers start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	for i in 0..<cast(i32)c_max_towers {
@@ -48,7 +64,7 @@ update :: proc() {
 		tower_pos := tile_index_to_pos_center(tower.pos);
 
 		target : i32 = -1;
-		passed := update_time - tower.shot_timestamp;
+		passed := g_game.update_time - tower.shot_timestamp;
 		if passed >= c_tower_shoot_delay {
 			for j in 0..<cast(i32)c_max_enemies {
 				if !play.enemy_arr.active[j] { continue; }
@@ -58,7 +74,7 @@ update :: proc() {
 		}
 		if target >= 0 {
 			enemy := &play.enemy_arr.data[target];
-			tower.shot_timestamp = update_time;
+			tower.shot_timestamp = g_game.update_time;
 			dir := v2_dir_from_to(tower_pos, enemy.pos);
 			tower.last_shot_angle = v2_angle(dir);
 			make_proj(tower_pos, dir);
@@ -85,13 +101,28 @@ update :: proc() {
 		for j in 0..<cast(i32)c_max_enemies {
 			if !play.enemy_arr.active[j] { continue; }
 			enemy := &play.enemy_arr.data[j];
+			enemy_data := c_enemy_data[enemy.type];
 			if rect_collides_rect_center(proj.pos, c_proj_size, enemy.pos, c_enemy_size) {
 				remove_proj = true;
 
 				enemy.damage_taken += proj.damage;
 				enemy.last_hit_time = g_game.update_time;
 				if enemy.damage_taken >= enemy.max_health {
-					remove_entity(&play.enemy_arr, j);
+
+					// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		enemy death start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+					{
+						for child_i in 0..<enemy_data.child_count {
+							for _ in 0..<enemy_data.children[child_i].count {
+								child_pos := enemy.pos;
+								child_pos.x += rand_snorm() * 8;
+								child_pos.y += rand_snorm() * 8;
+								make_enemy(enemy_data.children[child_i].type, child_pos);
+							}
+						}
+						play.gold += 1;
+						remove_entity(&play.enemy_arr, j);
+					}
+					// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		enemy death end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 					{
 						data := make_particle_data();
@@ -129,7 +160,7 @@ update :: proc() {
 			}
 		}
 
-		passed := update_time - proj.spawn_timestamp;
+		passed := g_game.update_time - proj.spawn_timestamp;
 		if passed >= c_proj_duration {
 			remove_proj = true;
 		}
@@ -145,8 +176,9 @@ update :: proc() {
 		if !play.enemy_arr.active[i] { continue; }
 		enemy := &play.enemy_arr.data[i];
 		enemy.prev_pos = enemy.pos;
+		data := c_enemy_data[enemy.type];
 
-		movement := 128 * delta;
+		movement := data.speed * delta;
 		for movement > 0 {
 			curr_tile := pos_to_tile_index(enemy.pos);
 			target_tile : s_v2i;
@@ -173,8 +205,7 @@ update :: proc() {
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		update enemies end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-	// if !g_replay.replaying && c_game_speed <= 1.0 {
-	if !g_replay.replaying {
+	if !g_replay.replaying && g_game.speed_index <= c_base_game_speed_index {
 		data, len := get_compressed_game_state();
 		base := intrinsics.ptr_offset(cast(^u8)g_replay_data, (g_game.max_compress_size + 4) * g_circular.end);
 		base2 := intrinsics.ptr_offset(base, 4);
@@ -194,6 +225,11 @@ render :: proc(interp_dt: f32) -> bool {
 	mouse := rl.GetMousePosition();
 
 	play := &g_game.play;
+	ui_y : i32 = 32;
+	ui_font_size : i32 : 32;
+	ui_advance := ui_font_size + 8;
+
+	can_start_placing_tower := !g_replay.replaying;
 
 	if rl.IsKeyPressed(.F7) {
 		write_game_state("state.tk");
@@ -205,6 +241,39 @@ render :: proc(interp_dt: f32) -> bool {
 	if rl.IsKeyPressed(.F9) {
 		do_replay();
 	}
+
+	if rl.IsKeyPressed(.M) {
+		g_game.disable_sounds = !g_game.disable_sounds;
+	}
+
+	if rl.IsKeyPressed(.KP_ADD) {
+		g_game.speed_index = circular_index(g_game.speed_index + 1, cast(i32)len(c_game_speed_arr));
+	}
+
+	if rl.IsKeyPressed(.KP_SUBTRACT) {
+		g_game.speed_index = circular_index(g_game.speed_index - 1, cast(i32)len(c_game_speed_arr));
+	}
+
+	if can_start_placing_tower {
+		if rl.IsKeyPressed(.ONE) {
+			play.tower_to_place = 0;
+		}
+		if rl.IsKeyPressed(.ESCAPE) {
+			play.tower_to_place = nil;
+		}
+	}
+
+	mouse_index := s_v2i{cast(i32)math.floor(mouse.x / c_tile_size), cast(i32)math.floor(mouse.y / c_tile_size)};
+	can_place_tower := !g_replay.replaying && is_valid_tile_index_for_tower(mouse_index) && play.tile_info[mouse_index.y][mouse_index.x].id.id <= 0 &&
+		play.gold >= c_tower_gold_cost;
+
+	can_start_wave := play.curr_wave < g_wave_count;
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		start wave start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	if can_start_wave && rl.IsKeyPressed(.SPACE) {
+		play.live_wave_info_arr[play.curr_wave].last_spawn_timestamp = g_game.update_time;
+		play.curr_wave += 1;
+	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		start wave end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render background start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	{
@@ -224,13 +293,6 @@ render :: proc(interp_dt: f32) -> bool {
 		}
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		render background end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-	mouse_index := s_v2i{cast(i32)math.floor(mouse.x / c_tile_size), cast(i32)math.floor(mouse.y / c_tile_size)};
-	if !g_replay.replaying && rl.IsMouseButtonDown(.LEFT) && is_valid_tile_index_for_tower(mouse_index) {
-		if play.tile_info[mouse_index.y][mouse_index.x].id.id <= 0 {
-			make_tower(mouse_index);
-		}
-	}
 
 	multiply_light_arr: s_list(s_light, 1024);
 	add_light_arr: s_list(s_light, 1024);
@@ -257,7 +319,7 @@ render :: proc(interp_dt: f32) -> bool {
 			list_add(&multiply_light_arr, light);
 		}
 
-		draw_rect_center(pos, v2_1(c_tile_size - 8), rl.GREEN);
+		draw_rect_center(pos, c_tower_size, rl.GREEN);
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		render towers end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -269,19 +331,20 @@ render :: proc(interp_dt: f32) -> bool {
 		enemy := play.enemy_arr.data[i];
 		pos := lerp_v2(enemy.prev_pos, enemy.pos, interp_dt);
 		passed := get_render_time(interp_dt) - enemy.last_hit_time;
+		data := c_enemy_data[enemy.type];
 
 		if passed < 0.2 {
 			list_add(&enemy_flash_arr, pos);
 		}
 		else {
-			draw_rect_center(pos, c_enemy_size, rl.RED);
+			draw_rect_center(pos, c_enemy_size, data.color);
 		}
 
 		{
 			light: s_light;
 			light.pos = pos;
 			light.radius = c_tile_size * 2;
-			light.color = rl.RED;
+			light.color = data.color;
 			light.color.a = 50;
 			list_add(&multiply_light_arr, light);
 		}
@@ -371,6 +434,29 @@ render :: proc(interp_dt: f32) -> bool {
 	}
 	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		particles end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+	if play.tower_to_place != nil {
+		pos := tile_index_to_pos_center(mouse_index);
+		color := rl.GREEN;
+		if !can_place_tower {
+			color = rl.RED;
+		}
+		color = set_alpha(color, 200);
+		draw_rect_center(pos, c_tower_size, color);
+
+		if can_place_tower && rl.IsMouseButtonDown(.LEFT) {
+			make_tower(mouse_index);
+			play.gold -= c_tower_gold_cost;
+
+			{
+				data := make_particle_data();
+				data.start_color = rl.WHITE;
+				data.end_color = rl.GREEN;
+				do_particles(pos, 32, data);
+			}
+
+		}
+	}
+
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		additive lights start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	{
 		// {
@@ -396,9 +482,25 @@ render :: proc(interp_dt: f32) -> bool {
 		draw_rect_center(flash, c_enemy_size, make_color_r(255));
 	}
 
+	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render ui start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+	{
+		rl.DrawText(fmt.ctprintf("Gold: {}", play.gold), 4, ui_y, ui_font_size, rl.RAYWHITE);
+		ui_y += ui_advance;
+
+		rl.DrawText(fmt.ctprintf("Wave: {} / {}", play.curr_wave, g_wave_count), 4, ui_y, ui_font_size, rl.RAYWHITE);
+		ui_y += ui_advance;
+
+		if g_game.speed_index != c_base_game_speed_index {
+			rl.DrawText(fmt.ctprintf("Speed: {:0.2f}", get_game_speed()), 4, ui_y, ui_font_size, rl.RAYWHITE);
+			ui_y += ui_advance;
+		}
+	}
+	// ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^		render ui end		^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		replay start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	if g_replay.replaying {
-		rl.DrawText(fmt.ctprintf("Update {} / {}", circular_get_as_linear(g_circular, g_circular.curr), circular_count(g_circular) - 1), 4, 64, 32, rl.RAYWHITE);
+		rl.DrawText(fmt.ctprintf("Update {} / {}", circular_get_as_linear(g_circular, g_circular.curr), circular_count(g_circular) - 1), 4, ui_y, ui_font_size, rl.RAYWHITE);
+		ui_y += ui_advance;
 		if rl.IsKeyPressed(.LEFT) || rl.IsKeyPressedRepeat(.LEFT) {
 			circular_curr_go_back(&g_circular);
 		}
@@ -442,7 +544,7 @@ render :: proc(interp_dt: f32) -> bool {
 @(export)
 game_update :: proc() -> bool {
 	if !is_game_paused() {
-		g_game.accumulator += rl.GetFrameTime() * c_game_speed;
+		g_game.accumulator += rl.GetFrameTime() * get_game_speed();
 	}
 	if g_replay.replaying {
 		len_ptr := cast(^i32)intrinsics.ptr_offset(cast(^u8)g_replay_data, g_circular.curr * (g_game.max_compress_size + 4));
@@ -468,6 +570,7 @@ game_init_window :: proc() {
 	rl.SetConfigFlags({.VSYNC_HINT, .MSAA_4X_HINT})
 	rl.InitWindow(c_window_width, c_window_height, "UHM")
 	rl.InitAudioDevice();
+	rl.SetExitKey(.KEY_NULL);
 }
 
 @(export)
@@ -476,7 +579,13 @@ game_init :: proc() {
 	g_game^ = s_game {}
 	g_replay_data = rl.MemAlloc(auto_cast c_replay_memory);
 
+	g_game.speed_index = c_base_game_speed_index;
+
 	play := &g_game.play;
+
+	init_waves();
+
+	play.gold = c_base_gold;
 
 	g_game.max_compress_size = auto_cast zlib.compressBound(size_of(s_game));
 	g_game.max_states = c_replay_memory / (g_game.max_compress_size + 4);
@@ -544,6 +653,8 @@ game_hot_reloaded :: proc(game_mem, replay_mem: rawptr) {
 
 	g_circular = {}
 	g_circular.count = g_game.max_states;
+
+	init_waves();
 }
 
 @(export)
@@ -605,7 +716,7 @@ make_tower :: proc(tile_index: s_v2i) -> i32
 	return index;
 }
 
-make_enemy :: proc(tile_index: s_v2i) -> i32
+make_enemy :: proc(type: e_enemy, pos: s_v2) -> i32
 {
 	using g_game.play;
 	assert(enemy_arr.count < c_max_enemies);
@@ -613,8 +724,8 @@ make_enemy :: proc(tile_index: s_v2i) -> i32
 	index := make_entity(&enemy_arr);
 
 	enemy := &enemy_arr.data[index];
-
-	enemy.pos = tile_index_to_pos_center(tile_index);
+	enemy.type = type;
+	enemy.pos = pos;
 	enemy.max_health = c_enemy_health;
 
 	return index;
@@ -1332,8 +1443,83 @@ circular_get_curr_from_percent :: proc(circular: s_circular, percent: f32) -> i3
 
 play_sound :: proc(id: e_sound)
 {
+	if g_game.disable_sounds { return; }
+
 	index := g_game.sound_play_index_arr[id];
 	rl.SetSoundPitch(g_game.sound_arr[id][index], 0.7 + rand.float32() * 0.6);
 	rl.PlaySound(g_game.sound_arr[id][index]);
 	g_game.sound_play_index_arr[id] = (index + 1) % c_sound_duplicates;
+}
+
+set_alpha :: proc(color: s_color, alpha: u8) -> s_color
+{
+	result := color;
+	result.a = alpha;
+	return result;
+}
+
+init_waves :: proc()
+{
+	g_wave_count = 0;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 20, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 35, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 25, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 5, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 35, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 18, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 5, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 27, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 15, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 15, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.green, 4, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 20, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 20, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.green, 5, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.red, 10, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 20, 1.0});
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.green, 14, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.green, 30, 1.0});
+	g_wave_count += 1;
+
+	list_add(&c_wave_arr[g_wave_count].data, s_wave_spawn_data{.blue, 102, 0.2});
+	g_wave_count += 1;
+
+}
+
+equal :: proc(a, b: $T) -> bool
+{
+	result := a >= b;
+	if result {
+		assert(a == b);
+	}
+	return result;
+}
+
+rand_snorm :: proc() -> f32
+{
+	result := rand.float32() * 2 - 1;
+	return result;
+}
+
+get_game_speed :: proc() -> f32
+{
+	result := c_game_speed_arr[g_game.speed_index];
+	return result;
 }

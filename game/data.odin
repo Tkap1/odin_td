@@ -10,6 +10,35 @@ s_render_texture :: rl.RenderTexture
 s_rect :: rl.Rectangle
 s_sound :: rl.Sound
 
+e_enemy :: enum
+{
+	red,
+	blue,
+	green,
+	yellow,
+}
+
+s_enemy_child :: struct
+{
+	type: e_enemy,
+	count: i32,
+}
+
+s_enemy_data :: struct
+{
+	speed: f32,
+	color: s_color,
+	child_count: i32,
+	children: [4]s_enemy_child,
+}
+
+c_enemy_data := []s_enemy_data{
+	e_enemy.red = {speed = 128.0, color = rl.RED},
+	e_enemy.blue = {speed = 140.0, color = rl.BLUE, child_count = 1, children = {0 = {.red, 1}}},
+	e_enemy.green = {speed = 160.0, color = rl.GREEN, child_count = 1, children = {0 = {.blue, 1}}},
+	e_enemy.yellow = {speed = 200.0, color = rl.YELLOW, child_count = 1, children = {0 = {.green, 1}}},
+}
+
 e_sound :: enum
 {
 	pop,
@@ -38,7 +67,29 @@ s_tower :: struct {
 	last_shot_angle: f32,
 }
 
+s_wave_spawn_data :: struct
+{
+	type: e_enemy,
+	to_spawn: i32,
+	delay: f32,
+}
+
+s_wave :: struct
+{
+	data: s_list(s_wave_spawn_data, 16),
+}
+
+s_live_wave_info :: struct
+{
+	index: i32,
+	how_many_spawned: i32,
+	finished: bool,
+	last_spawn_timestamp: f32,
+}
+
+
 s_enemy :: struct {
+	type: e_enemy,
 	id: i32,
 	prev_pos: s_v2,
 	pos: s_v2,
@@ -94,6 +145,12 @@ s_play :: struct
 	tile_info: [c_num_tiles][c_num_tiles]s_tile_info,
 	path_mask : [c_num_tiles][c_num_tiles]bool,
 	next_path_tile : [c_num_tiles][c_num_tiles]s_v2i,
+
+	live_wave_info_arr: [c_max_waves]s_live_wave_info,
+
+	tower_to_place : Maybe(i32),
+	curr_wave : i32,
+
 }
 
 s_game :: struct
@@ -103,6 +160,8 @@ s_game :: struct
 	accumulator: f32,
 	update_time: f32,
 	spawn_timer: f32,
+
+	speed_index : i32,
 
 	render_texture: s_render_texture,
 
@@ -117,6 +176,8 @@ s_game :: struct
 
 	sound_arr: [len(e_sound)][c_sound_duplicates]s_sound,
 	sound_play_index_arr: [len(e_sound)]i32,
+
+	disable_sounds: bool,
 }
 
 
