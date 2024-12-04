@@ -34,6 +34,7 @@ c_base_gold : i32 : 1000000;
 c_tower_size :: s_v2{c_tile_size - 8, c_tile_size - 8};
 c_tower_gold_cost : i32 : 10;
 c_max_waves: i32 : 128;
+c_invalid_entity : i32 : -100000000;
 
 // @Note(tkap, 03/12/2024): We need this because if we play the same sound twice and we set the pitch on each play the second pitch change will affect the first sound
 c_sound_duplicates :: 8;

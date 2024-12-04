@@ -149,6 +149,7 @@ s_play :: struct
 	live_wave_info_arr: [c_max_waves]s_live_wave_info,
 
 	tower_to_place : Maybe(i32),
+	selected_tower: Maybe(i32),
 	curr_wave : i32,
 
 }

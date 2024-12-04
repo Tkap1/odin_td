@@ -14,6 +14,7 @@
 
 package game
 
+import "core:math/linalg"
 import "core:fmt"
 import "core:math"
 import "core:os/os2"
@@ -254,18 +255,60 @@ render :: proc(interp_dt: f32) -> bool {
 		g_game.speed_index = circular_index(g_game.speed_index - 1, cast(i32)len(c_game_speed_arr));
 	}
 
+	if rl.IsKeyPressed(.DELETE) {
+		if play.tower_to_place == nil && play.selected_tower != nil {
+			tower_index := play.selected_tower.(i32);
+			tower := &play.tower_arr.data[tower_index];
+			play.tile_info[tower.pos.y][tower.pos.x].id = {};
+
+			{
+				tower_pos := tile_index_to_pos_center(tower.pos);
+				data := make_particle_data();
+				data.shrink = 0;
+				data.start_color = rl.RED;
+				data.end_color = set_alpha(rl.BLACK, 0);
+				data.max_speed = 600;
+				data.min_speed = 500;
+				data.slowdown = 4.0;
+				data.min_size = v2_1(20);
+				data.max_size = v2_1(15);
+				do_particles(tower_pos, 64, data);
+			}
+
+			remove_entity(&play.tower_arr, tower_index);
+			play.selected_tower = nil;
+		}
+	}
+
+
 	if can_start_placing_tower {
 		if rl.IsKeyPressed(.ONE) {
 			play.tower_to_place = 0;
 		}
-		if rl.IsKeyPressed(.ESCAPE) {
+	}
+
+	if rl.IsKeyPressed(.ESCAPE) {
+		if play.tower_to_place != nil {
 			play.tower_to_place = nil;
 		}
+		else if play.selected_tower != nil {
+			play.selected_tower = nil;
+		}
 	}
+
+	can_select_tower := play.tower_to_place == nil;
 
 	mouse_index := s_v2i{cast(i32)math.floor(mouse.x / c_tile_size), cast(i32)math.floor(mouse.y / c_tile_size)};
 	can_place_tower := !g_replay.replaying && is_valid_tile_index_for_tower(mouse_index) && play.tile_info[mouse_index.y][mouse_index.x].id.id <= 0 &&
 		play.gold >= c_tower_gold_cost;
+
+	if can_select_tower && rl.IsMouseButtonPressed(.LEFT) {
+		play.selected_tower = nil;
+		tower := tower_index_to_tower(play.tile_info[mouse_index.y][mouse_index.x].id);
+		if tower >= 0 {
+			play.selected_tower = tower;
+		}
+	}
 
 	can_start_wave := play.curr_wave < g_wave_count;
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		start wave start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
@@ -298,7 +341,7 @@ render :: proc(interp_dt: f32) -> bool {
 	add_light_arr: s_list(s_light, 1024);
 
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render towers start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
-	for i in 0..<c_max_towers {
+	for i in 0..<cast(i32)c_max_towers {
 		if !play.tower_arr.active[i] { continue; }
 		tower := &play.tower_arr.data[i];
 
@@ -482,6 +525,13 @@ render :: proc(interp_dt: f32) -> bool {
 		draw_rect_center(flash, c_enemy_size, make_color_r(255));
 	}
 
+	if play.tower_to_place == nil && play.selected_tower != nil {
+		tower := play.tower_arr.data[play.selected_tower.(i32)];
+		pos := tile_index_to_pos_center(tower.pos);
+		size := c_tower_size * v2_1(2.0) * linalg.fract(get_render_time(interp_dt) * -3.0);
+		draw_rect_outline(pos, size, 3, rl.WHITE);
+	}
+
 	// vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv		render ui start		vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
 	{
 		rl.DrawText(fmt.ctprintf("Gold: {}", play.gold), 4, ui_y, ui_font_size, rl.RAYWHITE);
@@ -662,16 +712,22 @@ game_force_restart :: proc() -> bool {
 	return rl.IsKeyPressed(.F6)
 }
 
-is_valid_tower_index :: proc(index: s_entity_id) -> bool
+tower_index_to_tower :: proc(index: s_entity_id) -> i32
 {
 	using g_game.play;
 	assert(index.index >= 0);
 	assert(index.index < c_max_towers);
 	assert(index.id >= 0);
-	if index.id <= 0 { return false; }
-	if !tower_arr.active[index.index] { return false; }
-	if tower_arr.data.id[index.index] != index.id { return false; }
-	return true;
+	if index.id <= 0 { return c_invalid_entity; }
+	if !tower_arr.active[index.index] { return c_invalid_entity; }
+	if tower_arr.data.id[index.index] != index.id { return c_invalid_entity; }
+	return index.index;
+}
+
+is_valid_tower_index :: proc(index: s_entity_id) -> bool
+{
+	result := tower_index_to_tower(index) >= 0;
+	return result;
 }
 
 make_entity :: proc(info: ^s_entity_info($T, $N)) -> i32
@@ -1522,4 +1578,14 @@ get_game_speed :: proc() -> f32
 {
 	result := c_game_speed_arr[g_game.speed_index];
 	return result;
+}
+
+draw_rect_outline :: proc(pos, size: s_v2, width: i32, color: s_color)
+{
+	rect : s_rect;
+	rect.x = pos.x - size.x * 0.5;
+	rect.y = pos.y - size.y * 0.5;
+	rect.width = size.x;
+	rect.height = size.y;
+	rl.DrawRectangleLinesEx(rect, 2, rl.WHITE);
 }
